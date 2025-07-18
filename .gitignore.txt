@@ -1,0 +1,17 @@
+# Laravel
+/vendor
+/node_modules
+.env
+.env.backup
+.env.example
+.env.local
+.env.testing
+.env.production
+.env.staging
+.phpunit.result.cache
+.DS_Store
+Thumbs.db
+
+# Composer
+composer.phar
+composer.lock
