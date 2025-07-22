@@ -44,6 +44,7 @@ Route::prefix('inventory')->group(function () {
     Route::get('/{item}/edit', [InventoryController::class, 'edit'])->name('inventory.edit'); // Form edit barang
     Route::put('/{item}', [InventoryController::class, 'update'])->name('inventory.update');  // Proses edit barang
     Route::delete('/{item}', [InventoryController::class, 'destroy'])->name('inventory.destroy'); // Hapus barang
+    Route::get('/mutation/{id}', [InventoryController::class, 'mutation'])->name('inventory.mutation');
     // Contoh mutasi stok (bisa dikembangkan nanti)
     // Route::get('/mutasi', [InventoryController::class, 'mutation'])->name('inventory.mutation');
 });

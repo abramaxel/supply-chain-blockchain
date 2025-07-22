@@ -39,8 +39,8 @@
                 <input type="date" name="order_date" id="order_date" class="form-control" value="{{ old('order_date', date('Y-m-d')) }}" required>
             </div>
             <div class="col-md-4">
-                <label for="customer_name" class="form-label">Customer <span class="text-danger">*</span></label>
-                <input type="text" name="customer_name" id="customer_name" class="form-control" value="{{ old('customer_name') }}" required>
+                <label for="customer" class="form-label">Customer <span class="text-danger">*</span></label>
+                <input type="text" name="customer" id="customer" class="form-control" value="{{ old('customer') }}" required>
             </div>
             <div class="col-md-4">
                 <label for="status" class="form-label">Status <span class="text-danger">*</span></label>

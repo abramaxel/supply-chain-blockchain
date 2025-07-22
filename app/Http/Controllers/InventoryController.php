@@ -15,20 +15,31 @@ class InventoryController extends Controller
 
    public function index(Request $request)
     {
-        $query = Item::query()->orderBy('name');
+        $search = request('search');
+        $perPage = request('per_page', 10);
 
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('item_code', 'like', "%{$search}%")
-                ->orWhere('name', 'like', "%{$search}%")
-                ->orWhere('type', 'like', "%{$search}%")
-                ->orWhere('unit', 'like', "%{$search}%");
+        $items = DB::table('items')
+            ->leftJoin('batches', 'items.id', '=', 'batches.item_id')
+            ->select(
+                'items.id',
+                'items.item_code',
+                'items.name',
+                'items.type',
+                'items.unit',
+                DB::raw('COALESCE(SUM(batches.quantity), 0) as total_stock')
+            )
+            ->groupBy('items.id', 'items.item_code', 'items.name', 'items.type', 'items.unit');
+
+        if ($search) {
+            $items = $items->where(function ($query) use ($search) {
+                $query->where('items.item_code', 'like', "%$search%")
+                    ->orWhere('items.name', 'like', "%$search%")
+                    ->orWhere('items.type', 'like', "%$search%")
+                    ->orWhere('items.unit', 'like', "%$search%");
             });
         }
 
-        // Untuk pagination, ganti ke paginate
-        $items = $query->paginate(10);
+        $items = $items->paginate($perPage)->withQueryString();
 
         return view('inventory.index', compact('items'));
     }
@@ -129,5 +140,23 @@ class InventoryController extends Controller
         return redirect()->route('inventory.index')->with('success', 'Barang berhasil diperbarui!');
     }
 
+    public function mutation($id)
+    {
+        $item = DB::table('items')->where('id', $id)->first();
+
+        if (!$item) {
+            return redirect()->route('inventory.index')->with('error', 'Barang tidak ditemukan');
+        }
+
+        $batches = DB::table('batches')
+            ->where('item_id', $id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        // Di sini kamu bisa tambahkan logika mutasi lain (penjualan, pengeluaran, dll)
+        // Untuk saat ini kita hanya tampilkan batch sebagai mutasi masuk
+
+        return view('inventory.mutation', compact('item', 'batches'));
+    }
 
 }
