@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use App\Models\SalesOrderItem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
@@ -11,35 +12,45 @@ use App\Models\Item;
 
 class InventoryController extends Controller
 {
-    // InventoryController.php
-
-   public function index(Request $request)
+    public function index(Request $request)
     {
-        $search = request('search');
-        $perPage = request('per_page', 10);
+        $search = $request->input('search');
+        $perPage = $request->input('per_page', 10);
+
+        // Subquery untuk total masuk (batches)
+        $totalIn = DB::table('batches')
+            ->select('item_id', DB::raw('SUM(quantity) as total_in'))
+            ->groupBy('item_id');
+
+        // Subquery untuk total keluar (sales_order_items)
+        $totalOut = DB::table('sales_order_items')
+            ->select('item_id', DB::raw('SUM(quantity) as total_out'))
+            ->groupBy('item_id');
 
         $items = DB::table('items')
-            ->leftJoin('batches', 'items.id', '=', 'batches.item_id')
-            ->select(
+            ->select([
                 'items.id',
                 'items.item_code',
                 'items.name',
                 'items.type',
                 'items.unit',
-                DB::raw('COALESCE(SUM(batches.quantity), 0) as total_stock')
-            )
-            ->groupBy('items.id', 'items.item_code', 'items.name', 'items.type', 'items.unit');
+                DB::raw('COALESCE(total_in.total_in, 0) as total_in'),
+                DB::raw('COALESCE(total_out.total_out, 0) as total_out'),
+                DB::raw('COALESCE(total_in.total_in, 0) - COALESCE(total_out.total_out, 0) as net_stock'),
+            ])
+            ->leftJoinSub($totalIn, 'total_in', 'items.id', '=', 'total_in.item_id')
+            ->leftJoinSub($totalOut, 'total_out', 'items.id', '=', 'total_out.item_id');
 
         if ($search) {
-            $items = $items->where(function ($query) use ($search) {
-                $query->where('items.item_code', 'like', "%$search%")
-                    ->orWhere('items.name', 'like', "%$search%")
-                    ->orWhere('items.type', 'like', "%$search%")
-                    ->orWhere('items.unit', 'like', "%$search%");
+            $items->where(function ($q) use ($search) {
+                $q->where('items.item_code', 'like', "%$search%")
+                ->orWhere('items.name', 'like', "%$search%")
+                ->orWhere('items.type', 'like', "%$search%")
+                ->orWhere('items.unit', 'like', "%$search%");
             });
         }
 
-        $items = $items->paginate($perPage)->withQueryString();
+        $items = $items->orderBy('items.name')->paginate($perPage)->withQueryString();
 
         return view('inventory.index', compact('items'));
     }
@@ -120,43 +131,47 @@ class InventoryController extends Controller
     }
 
     public function update(Request $request, $id)
-    {
-        $item = Item::findOrFail($id);
+        {
+            $item = Item::findOrFail($id);
 
-        $request->validate([
-            'item_code' => 'required|unique:items,item_code,' . $item->id,
-            'name'      => 'required|string|max:255',
-            'type'      => 'required|in:raw_material,finished_good',
-            'unit'      => 'nullable|string|max:255',
-        ]);
+            $request->validate([
+                'item_code' => 'required|unique:items,item_code,' . $item->id,
+                'name'      => 'required|string|max:255',
+                'type'      => 'required|in:raw_material,finished_good',
+                'unit'      => 'nullable|string|max:255',
+            ]);
 
-        $item->update([
-            'item_code' => $request->item_code,
-            'name'      => $request->name,
-            'type'      => $request->type,
-            'unit'      => $request->unit,
-        ]);
+            $item->update([
+                'item_code' => $request->item_code,
+                'name'      => $request->name,
+                'type'      => $request->type,
+                'unit'      => $request->unit,
+            ]);
 
-        return redirect()->route('inventory.index')->with('success', 'Barang berhasil diperbarui!');
-    }
-
-    public function mutation($id)
-    {
-        $item = DB::table('items')->where('id', $id)->first();
-
-        if (!$item) {
-            return redirect()->route('inventory.index')->with('error', 'Barang tidak ditemukan');
+            return redirect()->route('inventory.index')->with('success', 'Barang berhasil diperbarui!');
         }
 
-        $batches = DB::table('batches')
-            ->where('item_id', $id)
-            ->orderBy('created_at', 'desc')
-            ->get();
+    public function mutation($id)
+        {
+            $item = DB::table('items')->where('id', $id)->first();
 
-        // Di sini kamu bisa tambahkan logika mutasi lain (penjualan, pengeluaran, dll)
-        // Untuk saat ini kita hanya tampilkan batch sebagai mutasi masuk
+            if (!$item) {
+                return redirect()->route('inventory.index')->with('error', 'Barang tidak ditemukan');
+            }
 
-        return view('inventory.mutation', compact('item', 'batches'));
-    }
+            // 📦 Mutasi Masuk: Data batch stok masuk
+            $batches = DB::table('batches')
+                ->where('item_id', $id)
+                ->orderBy('created_at', 'desc')
+                ->get();
 
+            // 📤 Mutasi Keluar: Penjualan dari sales_order_items
+            $sales = SalesOrderItem::with('salesOrder') // relasi ke sales order untuk ambil so_number
+                ->where('item_id', $id)
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            // Kirim semua data ke view
+            return view('inventory.mutation', compact('item', 'batches', 'sales'));
+        }
 }

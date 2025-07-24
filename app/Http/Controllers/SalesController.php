@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderItem;
 use App\Models\Item;
+use App\Models\Batch;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
@@ -40,23 +41,47 @@ class SalesController extends Controller
     // Tampilkan form create sales order
     public function create()
     {
-        // Ambil semua item (finished_good saja misal)
         $items = Item::where('type', 'finished_good')->orderBy('name')->get();
 
-        // Ambil semua batch (relasi ke item)
-        $batches = \App\Models\Batch::with('item')->get();
+        // Hitung batch yang masih punya stok
+        $batches = collect();
+        foreach ($items as $item) {
+            $itemBatches = Batch::where('item_id', $item->id)->get();
+            $filteredBatches = [];
 
-        // Kirim ke view
+            foreach ($itemBatches as $batch) {
+                $sold = SalesOrderItem::where('item_id', $batch->item_id)
+                    ->where('batch_no', $batch->batch_no)
+                    ->sum('quantity');
+
+                $available = $batch->quantity - $sold;
+
+                // Hanya tambahkan jika stok masih ada
+                if ($available > 0) {
+                    $filteredBatches[] = [
+                        'item_id' => $batch->item_id,
+                        'batch_no' => $batch->batch_no,
+                        'available' => $available,
+                        'location' => $batch->location,
+                    ];
+                }
+            }
+
+            if (!empty($filteredBatches)) {
+                $batches[$item->id] = $filteredBatches;
+            }
+        }
+
         return view('sales.create', compact('items', 'batches'));
     }
 
     // Simpan sales order baru beserta itemnya
-   public function store(Request $request)
+    public function store(Request $request)
     {
         $request->validate([
             'so_number' => 'required|unique:sales_orders,so_number',
             'order_date' => 'required|date',
-            'customer' => 'required|string|max:256',
+            'customer' => 'required|string|max:255',
             'status' => 'required|in:open,approved,closed,cancelled',
             'items' => 'required|array|min:1',
             'items.*.item_id' => 'required|exists:items,id',
@@ -68,7 +93,35 @@ class SalesController extends Controller
         DB::beginTransaction();
 
         try {
-            // Simpan Sales Order
+            // Cek stok per batch
+            foreach ($request->items as $itemData) {
+                $itemId = $itemData['item_id'];
+                $batchNo = $itemData['batch_no'];
+                $requestedQty = $itemData['quantity'];
+
+                // Ambil stok dari batch tertentu
+                $batch = Batch::where('item_id', $itemId)
+                    ->where('batch_no', $batchNo)
+                    ->first();
+
+                if (!$batch) {
+                    throw new \Exception("Batch $batchNo tidak ditemukan untuk barang ini.");
+                }
+
+                // Hitung total penjualan dari batch ini
+                $soldFromThisBatch = SalesOrderItem::where('item_id', $itemId)
+                    ->where('batch_no', $batchNo)
+                    ->sum('quantity');
+
+                $availableStock = $batch->quantity - $soldFromThisBatch;
+
+                if ($requestedQty > $availableStock) {
+                    $itemName = $batch->item->name ?? 'Barang';
+                    throw new \Exception("Stok batch $batchNo untuk $itemName tidak mencukupi. Diminta: $requestedQty, Tersedia: $availableStock");
+                }
+            }
+
+            // Lanjutkan simpan data
             $salesOrder = SalesOrder::create([
                 'so_number' => $request->input('so_number'),
                 'order_date' => $request->input('order_date'),
@@ -76,26 +129,23 @@ class SalesController extends Controller
                 'status' => $request->input('status'),
             ]);
 
-            // Simpan item penjualan
-          foreach ($request->input('items', []) as $itemData) {
-            $salesItem = SalesOrderItem::create([
-                'sales_order_id' => $salesOrder->id,
-                'item_id' => $itemData['item_id'],
-                'batch_no' => $itemData['batch_no'],
-                'quantity' => $itemData['quantity'],
-                'unit_selling_price' => $itemData['unit_price'],
-                'total_price' => $itemData['unit_price'] * $itemData['quantity'],
-            ]);
+            foreach ($request->items as $itemData) {
+                $salesItem = SalesOrderItem::create([
+                    'sales_order_id' => $salesOrder->id,
+                    'item_id' => $itemData['item_id'],
+                    'batch_no' => $itemData['batch_no'],
+                    'quantity' => $itemData['quantity'],
+                    'unit_selling_price' => $itemData['unit_price'],
+                    'total_price' => $itemData['unit_price'] * $itemData['quantity'],
+                ]);
 
-            // Sekarang aman dan tanpa warning
-            $entityType = 'sales_order_item';
-            $entityId = $salesItem->id;
+                // Simpan ke blockchain_logs
+                $entityType = 'sales_order_item';
+                $entityId = $salesItem->id;
 
                 $previousBlock = DB::table('blockchain_logs')
                     ->where('entity_type', $entityType)
-                    ->orderByDesc('id')
-                    ->first();
-
+                    ->orderByDesc('id')->first();
                 $previousHash = $previousBlock ? $previousBlock->block_hash : null;
 
                 $data = [
@@ -108,14 +158,14 @@ class SalesController extends Controller
                 $blockHash = hash('sha256', $hashString);
 
                 DB::table('blockchain_logs')->insert([
-                    'block_hash'    => $blockHash,
+                    'block_hash' => $blockHash,
                     'previous_hash' => $previousHash,
-                    'entity_type'   => $entityType,
-                    'entity_id'     => $entityId,
-                    'action'        => 'CREATE',
-                    'data'          => json_encode($data),
-                    'user_id'       => Auth::id(),
-                    'created_at'    => $now,
+                    'entity_type' => $entityType,
+                    'entity_id' => $entityId,
+                    'action' => 'CREATE',
+                    'data' => json_encode($data),
+                    'user_id' => Auth::id(),
+                    'created_at' => $now,
                 ]);
             }
 
@@ -133,6 +183,7 @@ class SalesController extends Controller
                 ->with('error', 'Gagal membuat Sales Order: ' . $e->getMessage());
         }
     }
+
     /**
      * Show the form for editing the specified sales order.
      */

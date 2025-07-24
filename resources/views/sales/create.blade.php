@@ -152,96 +152,87 @@
 @endsection
 
 @push('scripts')
-
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-
 <script>
-window.batchData = @json($batches->groupBy('item_id')->map->values());
+    // Data batch dari controller (hanya yang stoknya > 0)
+    window.batchData = @json($batches);
 
-function bindBatchDropdowns() {
-    document.querySelectorAll('.item-select').forEach(function(sel){
-        sel.onchange = function() {
-            const row = this.getAttribute('data-row');
-            const batchSelect = document.querySelector('.batch-select[data-row="'+row+'"]');
-            const itemId = this.value;
-            batchSelect.innerHTML = '<option value="">Pilih batch...</option>';
-            if (itemId && batchData[itemId]) {
-                batchData[itemId].forEach(function(batch){
-                    batchSelect.innerHTML += `<option value="${batch.batch_no}">${batch.batch_no} (${batch.location ?? '-'})</option>`;
-                });
-            }
-            // Auto-select old value jika reload
-            if (batchSelect && batchSelect.dataset.old) {
-                batchSelect.value = batchSelect.dataset.old;
-            }
-        };
-    });
-}
+    function bindBatchDropdowns() {
+        document.querySelectorAll('.item-select').forEach(function(sel) {
+            sel.onchange = function() {
+                const row = this.getAttribute('data-row');
+                const batchSelect = document.querySelector('.batch-select[data-row="' + row + '"]');
+                const itemId = this.value;
 
-document.addEventListener('DOMContentLoaded', function () {
-    bindBatchDropdowns();
-    // Trigger change untuk setiap item-select agar batch terisi saat edit/error
-    document.querySelectorAll('.item-select').forEach(function(sel){
-        sel.dispatchEvent(new Event('change'));
-    });
+                // Kosongkan dulu
+                batchSelect.innerHTML = '<option value="">Pilih batch...</option>';
 
-    // Hitung subtotal otomatis saat qty/price berubah
-    function updateSubtotals() {
-        document.querySelectorAll('#items-table tbody tr').forEach(function(row) {
-            let qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
-            let price = parseFloat(row.querySelector('.price-input')?.value) || 0;
-            let subtotal = qty * price;
-            row.querySelector('.subtotal').value = subtotal ? subtotal.toLocaleString('id-ID') : '';
+                if (itemId && window.batchData[itemId]) {
+                    window.batchData[itemId].forEach(function(batch) {
+                        // Tampilkan batch + sisa stok
+                        const label = `${batch.batch_no} (${batch.available} tersedia)`;
+                        const option = document.createElement('option');
+                        option.value = batch.batch_no;
+                        option.textContent = label;
+                        batchSelect.appendChild(option);
+                    });
+
+                    // Restore old value jika ada
+                    if (batchSelect.dataset.old) {
+                        batchSelect.value = batchSelect.dataset.old;
+                    }
+                }
+            };
         });
     }
-    document.querySelector('#items-table').addEventListener('input', function(e) {
-        if (e.target.classList.contains('qty-input') || e.target.classList.contains('price-input')) {
-            updateSubtotals();
-        }
-    });
-    updateSubtotals();
 
-    // Tambah row barang
-    document.getElementById('add-row').addEventListener('click', function() {
-        let idx = document.querySelectorAll('#items-table tbody tr').length;
-        let template = document.getElementById('row-template').outerHTML
-            .replace(/_template/g, '['+idx+']')
-            .replace(/__row__/g, idx)
-            .replace(/disabled/g, '');
-        let tr = document.createElement('tr');
-        tr.innerHTML = template.match(/<tr[^>]*>([\s\S]*)<\/tr>/i)[1];
-        document.querySelector('#items-table tbody').appendChild(tr);
+    document.addEventListener('DOMContentLoaded', function () {
         bindBatchDropdowns();
-        updateSubtotals();
-    });
 
-    // Hapus row barang
-    document.querySelector('#items-table tbody').addEventListener('click', function(e) {
-        if (e.target.closest('.remove-row')) {
-            let trs = document.querySelectorAll('#items-table tbody tr');
-            if (trs.length > 1) e.target.closest('tr').remove();
+        // Trigger change untuk isi batch saat reload
+        document.querySelectorAll('.item-select').forEach(sel => {
+            sel.dispatchEvent(new Event('change'));
+        });
+
+        // Update subtotal
+        function updateSubtotals() {
+            document.querySelectorAll('#items-table tbody tr').forEach(function(row) {
+                let qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
+                let price = parseFloat(row.querySelector('.price-input')?.value) || 0;
+                let subtotal = qty * price;
+                row.querySelector('.subtotal').value = subtotal ? subtotal.toLocaleString('id-ID') : '';
+            });
         }
+
+        document.querySelector('#items-table').addEventListener('input', function(e) {
+            if (e.target.classList.contains('qty-input') || e.target.classList.contains('price-input')) {
+                updateSubtotals();
+            }
+        });
+
+        updateSubtotals();
+
+        // Tambah baris
+        document.getElementById('add-row').addEventListener('click', function() {
+            let idx = document.querySelectorAll('#items-table tbody tr').length;
+            let template = document.getElementById('row-template').outerHTML
+                .replace(/_template/g, '['+idx+']')
+                .replace(/__row__/g, idx)
+                .replace(/disabled/g, '');
+            let tr = document.createElement('tr');
+            tr.innerHTML = template.match(/<tr[^>]*>([\s\S]*)<\/tr>/i)[1];
+            document.querySelector('#items-table tbody').appendChild(tr);
+            bindBatchDropdowns();
+            updateSubtotals();
+        });
+
+        // Hapus baris
+        document.querySelector('#items-table tbody').addEventListener('click', function(e) {
+            if (e.target.closest('.remove-row')) {
+                let trs = document.querySelectorAll('#items-table tbody tr');
+                if (trs.length > 1) e.target.closest('tr').remove();
+            }
+        });
     });
-});
-
-// // SweetAlert session
-// @if(session('success'))
-//     Swal.fire({
-//         icon: 'success',
-//         title: 'Berhasil',
-//         text: '{{ session('success') }}',
-//         showConfirmButton: false,
-//         timer: 1800
-//     });
-// @endif
-// @if(session('error'))
-//     Swal.fire({
-//         icon: 'error',
-//         title: 'Gagal',
-//         text: `{!! session('error') !!}`,
-//         showConfirmButton: true
-//     });
-// @endif
 </script>
-
 @endpush
